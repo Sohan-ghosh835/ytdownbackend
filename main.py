@@ -10,13 +10,12 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-    "https://sohan-ghosh835.github.io",
-    "https://sohan-ghosh835.github.io/ytdownfrontend"],
+    allow_origins=["https://sohan-ghosh835.github.io"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 class DownloadRequest(BaseModel):
     url: str

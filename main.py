@@ -10,12 +10,11 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 class DownloadRequest(BaseModel):
     url: str
@@ -31,24 +30,34 @@ async def download_video(data: DownloadRequest, request: Request):
     output_dir = "downloads"
     os.makedirs(output_dir, exist_ok=True)
 
+    common_opts = {
+        'outtmpl': f'{output_dir}/{filename}.%(ext)s',
+        'quiet': True,
+        'noplaylist': True,
+        'retries': 3,
+        'sleep_interval_requests': 1,
+        'max_sleep_interval': 3,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        }
+    }
+
     if fmt == "mp3":
         ydl_opts = {
+            **common_opts,
             'format': f'bestaudio[abr<={quality}]',
-            'outtmpl': f'{output_dir}/{filename}.%(ext)s',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
                 'preferredquality': quality,
-            }],
-            'quiet': True,
+            }]
         }
         ext = 'mp3'
     else:
         ydl_opts = {
+            **common_opts,
             'format': f'bestvideo[height<={quality}]+bestaudio/best',
             'merge_output_format': 'mp4',
-            'outtmpl': f'{output_dir}/{filename}.%(ext)s',
-            'quiet': True,
         }
         ext = 'mp4'
 

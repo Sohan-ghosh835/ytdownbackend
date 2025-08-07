@@ -1,30 +1,39 @@
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 import yt_dlp
-from pytube import YouTube
-import tkinter as tk
-from tkinter import filedialog, messagebox
+import os
+import uuid
 
-def get_best_qualities(link):
-    best_video_res = None
-    best_audio_abr = None
-    try:
-        with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-            info = ydl.extract_info(link, download=False)
-            formats = info.get('formats', [])
-            video_resolutions = [f.get('height', 0) for f in formats if f.get('vcodec') != 'none']
-            audio_bitrates = [f.get('abr', 0) for f in formats if f.get('acodec') != 'none' and f.get('vcodec') == 'none']
-            if video_resolutions:
-                best_video_res = max(video_resolutions)
-            if audio_bitrates:
-                best_audio_abr = max(audio_bitrates)
-    except Exception:
-        pass
-    return str(best_video_res), str(int(best_audio_abr)) if best_audio_abr else None
+app = FastAPI()
 
-def try_download_ytdlp(video_url, save_dir, fmt, quality):
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class DownloadRequest(BaseModel):
+    url: str
+    format: str
+    quality: str
+
+@app.post("/download")
+async def download_video(data: DownloadRequest):
+    url = data.url
+    fmt = data.format
+    quality = data.quality
+    filename = f"{uuid.uuid4()}"
+    output_dir = "downloads"
+    os.makedirs(output_dir, exist_ok=True)
+
     if fmt == "mp3":
-        options = {
+        ydl_opts = {
             'format': f'bestaudio[abr<={quality}]',
-            'outtmpl': f'{save_dir}/%(title)s.%(ext)s',
+            'outtmpl': f'{output_dir}/{filename}.%(ext)s',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -33,58 +42,26 @@ def try_download_ytdlp(video_url, save_dir, fmt, quality):
             'quiet': True,
         }
     else:
-        options = {
+        ydl_opts = {
             'format': f'bestvideo[height<={quality}]+bestaudio/best',
             'merge_output_format': 'mp4',
-            'outtmpl': f'{save_dir}/%(title)s.%(ext)s',
+            'outtmpl': f'{output_dir}/{filename}.%(ext)s',
             'quiet': True,
         }
+
     try:
-        with yt_dlp.YoutubeDL(options) as ydl:
-            ydl.download([video_url])
-        return True
-    except Exception:
-        return False
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
-def fallback_download_pytube(link, destination_folder, quality):
-    try:
-        yt_obj = YouTube(link)
-        mp4_streams = yt_obj.streams.filter(progressive=True, file_extension='mp4', res=quality)
-        best_stream = mp4_streams.first()
-        if best_stream:
-            best_stream.download(output_path=destination_folder)
-            return True
-        return False
-    except Exception:
-        return False
+    file_ext = 'mp3' if fmt == 'mp3' else 'mp4'
+    download_path = f"{output_dir}/{filename}.{file_ext}"
+    return {"download_url": f"/file/{filename}.{file_ext}"}
 
-def pick_output_folder():
-    return filedialog.askdirectory()
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    root.withdraw()
-    video_link = input("Enter the YouTube video URL: ").strip()
-    best_video, best_audio = get_best_qualities(video_link)
-    format_choice = input(f"Choose format (mp4/mp3): ").strip().lower()
-    if format_choice == "mp4":
-        print(f"Highest available resolution: {best_video}p")
-        quality_choice = input("Select resolution (e.g., 1080, 720, 480): ").strip()
-    elif format_choice == "mp3":
-        print(f"Highest available audio bitrate: {best_audio}kbps")
-        quality_choice = input("Select audio bitrate (e.g., 160, 128, 70): ").strip()
-    else:
-        print("Invalid format")
-        exit()
-    print("choosing output folder . . .")
-    output_path = pick_output_folder()
-    if not output_path:
-        messagebox.showerror("Error", "No folder selected.")
-        exit()
-    print("downloading . . .")
-    if try_download_ytdlp(video_link, output_path, format_choice, quality_choice):
-        print("Success: Downloaded")
-    elif format_choice == "mp4" and fallback_download_pytube(video_link, output_path, quality_choice + "p"):
-        print("Success: Downloaded (fallback)")
-    else:
-        print("Download failed! Please check the video URL or your internet connection.")
+@app.get("/file/{filename}")
+def serve_file(filename: str):
+    filepath = f"downloads/{filename}"
+    if not os.path.exists(filepath):
+        return JSONResponse(status_code=404, content={"error": "File not found"})
+    return FileResponse(filepath, media_type='application/octet-stream', filename=filename)
